@@ -188,7 +188,7 @@ export function buildTrip(input: { request: string; profile: RequestProfile; des
     nearby: places.slice(days.flatMap((day) => day.stops).length, days.flatMap((day) => day.stops).length + 3).map((place) => place.name),
     heroImage: photoUrl, imageAlt: photoUrl ? photoAlt : undefined,
     photographerName: photo?.user?.name ?? (photoUrl ? 'Verified destination reference' : undefined), photographerUrl: photo?.user?.links?.html ? `${photo.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` : photo?.fullurl,
-    gallery: photos.slice(0, 6).map((item) => ({ url: item?.urls?.regular ?? item?.thumbnail?.source, alt: item?.alt_description ?? item?.title ?? `A glimpse of ${destination}`, photographerName: item?.user?.name ?? 'Verified destination reference', photographerUrl: item?.user?.links?.html ? `${item.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` : item?.fullurl })).filter((item) => item.url && item.photographerUrl),
+    gallery: photos.slice(0, 6).map((item) => ({ url: item?.urls?.regular ?? item?.thumbnail?.source, alt: item?.alt_description ?? item?.title ?? `A glimpse of ${destination}`, photographerName: item?.user?.name ?? 'Verified source', photographerUrl: item?.user?.links?.html ? `${item.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` : item?.fullurl })).filter((item) => item.url && item.photographerUrl && item.url.trim()),
     sources, generatedAt: new Date().toISOString(),
   }
 }

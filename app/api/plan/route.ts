@@ -99,6 +99,8 @@ export async function POST(request: Request) {
           .filter((page: any, index: number, values: any[]) => page.thumbnail?.source && values.findIndex((candidate: any) => candidate.pageid === page.pageid) === index)
           .slice(0, 8)
           .map((page: any) => ({ thumbnail: page.thumbnail, title: page.title, fullurl: `https://en.wikipedia.org/?curid=${page.pageid}` }))
+        const unsplashPayload = process.env.UNSPLASH_ACCESS_KEY ? await json(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(`${destination} ${country} travel`)}&orientation=landscape&per_page=8&order_by=relevance`, { headers: { Authorization: `Client-ID ${process.env.UNSPLASH_ACCESS_KEY}`, 'Accept-Version': 'v1' } }, 1).catch(() => null) : null
+        const unsplashImages = unsplashPayload?.results?.filter((photo: any) => photo?.urls?.regular && photo?.user?.links?.html && !isExcludedRegion(`${photo.alt_description ?? ''}`)).map((photo: any) => ({ urls: photo.urls, user: photo.user, alt_description: photo.alt_description ?? `Travel photography from ${destination}` })) ?? []
         const requests = await Promise.allSettled([
           json(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=7`),
           json(`https://restcountries.com/v3.1/name/${encodeURIComponent(country)}?fullText=true&fields=name,currencies,languages,timezones`),
@@ -131,8 +133,9 @@ export async function POST(request: Request) {
         const hasWikipediaAnchors = normalizedPlaces.some((place) => place.isAnchor)
         const fallbackAnchorNames = new Set(normalizedPlaces.filter((place) => /attraction|museum|gallery|viewpoint|monument|memorial|castle|ruins|archaeological|place_of_worship|park|garden/.test(place.type.toLocaleLowerCase())).sort((a, b) => (b.prominence ?? 0) - (a.prominence ?? 0)).slice(0, Math.max(profile.days * 2, 6)).map((place) => place.name.toLocaleLowerCase()))
         const places = normalizedPlaces.map((place) => ({ ...place, isAnchor: place.isAnchor || (!hasWikipediaAnchors && fallbackAnchorNames.has(place.name.toLocaleLowerCase())), distanceFromBaseKm: distanceKm(base, place) }))
-        const photos = wikiImages
-        if (wikiImages.length) sources.push('Coordinate-verified Wikipedia destination images')
+        const photos = unsplashImages.length >= 4 ? unsplashImages : wikiImages.length > 0 ? wikiImages.map((page: any) => ({ urls: { regular: page.thumbnail.source }, user: { links: { html: page.fullurl } }, alt_description: `A glimpse of ${destination}` })) : []
+        if (unsplashImages.length) sources.push('Unsplash travel photography')
+        else if (wikiImages.length) sources.push('Wikipedia destination images')
 
         let exchangeRate: number | undefined
         if (profile.currency !== 'INR' && process.env.EXCHANGE_RATE_API_KEY) {
