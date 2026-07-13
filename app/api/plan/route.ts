@@ -44,8 +44,12 @@ export async function POST(request: Request) {
         event(controller, encoder, 'location', { destination, country, coordinates: [latitude, longitude] })
 
         event(controller, encoder, 'status', { phase: 'researching', label: 'Identifying famous cultural landmarks from Wikipedia' })
-        const wikiQueries = ['top tourist attractions', 'famous landmarks monuments', 'museums cultural heritage', 'religious sites temples churches monasteries', 'major natural attractions']
-        const wikiSearches = await Promise.all(wikiQueries.map((query) => json(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrsearch=${encodeURIComponent(`${destination} ${query}`)}&gsrnamespace=0&gsrlimit=16&prop=coordinates|extracts&pageimages&exintro=1&explaintext=1&exsentences=3&pithumbsize=800`).catch(() => null)))
+        const wikiQueries = ['top tourist attractions', 'famous landmarks monuments', 'museums cultural heritage', 'religious sites', 'major natural attractions']
+        const wikiHeaders = { headers: { 'User-Agent': 'AtlasTravelPlanner/1.0 (public travel research)' } }
+        const wikiSearches = await Promise.all([
+          json(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=geosearch&ggsprimary=all&ggsnamespace=0&ggsradius=10000&ggslimit=50&ggscoord=${latitude}%7C${longitude}&prop=coordinates|extracts&pageimages&exintro=1&explaintext=1&exsentences=3&pithumbsize=800`, wikiHeaders).catch(() => null),
+          ...wikiQueries.map((query) => json(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrsearch=${encodeURIComponent(`${destination} ${country} ${query}`)}&gsrnamespace=0&gsrlimit=12&prop=coordinates|extracts&pageimages&exintro=1&explaintext=1&exsentences=3&pithumbsize=800`, wikiHeaders).catch(() => null)),
+        ])
         const anchorCandidates = new Map<string, any>()
         wikiSearches.forEach((payload, queryIndex) => Object.values(payload?.query?.pages ?? {}).forEach((page: any, resultIndex) => {
           const coordinate = page.coordinates?.[0], title = String(page.title ?? ''), lower = title.toLocaleLowerCase()
@@ -56,11 +60,12 @@ export async function POST(request: Request) {
         }))
         const base = { lat: latitude, lon: longitude }
         const famousAnchors = [...anchorCandidates.values()].filter((page: any) => !isExcludedRegion(page) && distanceKm(base, { lat: page.coordinates[0].lat, lon: page.coordinates[0].lon }) <= radiusKm).sort((a: any, b: any) => b.score - a.score).slice(0, Math.max(profile.days * 3, 10))
-        if (!famousAnchors.length) throw new Error('Wikipedia did not return enough coordinate-backed famous attractions for this destination. Try a nearby major city or a more specific region.')
-        sources.push('Wikipedia landmark search')
+        if (famousAnchors.length) sources.push('Wikipedia landmark search')
         const anchorRadius = regional ? 12000 : 5000
-        const anchorCoordinates = famousAnchors.slice(0, Math.max(profile.days * 2, 6)).map((page: any) => [page.coordinates[0].lat, page.coordinates[0].lon])
-        const selectors = ['["tourism"~"hotel|hostel|guest_house|motel|apartment"]', '["amenity"~"restaurant|fast_food|food_court|cafe|ice_cream|marketplace|pharmacy|bank|atm|car_rental"]', '["leisure"~"park|garden|sports_centre"]', '["shop"~"mall|department_store|marketplace|supermarket"]']
+        const anchorCoordinates = famousAnchors.length
+          ? famousAnchors.slice(0, Math.max(profile.days * 2, 6)).map((page: any) => [page.coordinates[0].lat, page.coordinates[0].lon])
+          : [[latitude, longitude]]
+        const selectors = ['["tourism"~"attraction|museum|gallery|viewpoint|zoo|theme_park|hotel|hostel|guest_house|motel|apartment"]', '["historic"~"monument|memorial|castle|ruins|archaeological_site"]', '["amenity"~"place_of_worship|restaurant|fast_food|food_court|cafe|ice_cream|marketplace|pharmacy|bank|atm|car_rental"]', '["leisure"~"park|garden|sports_centre"]', '["shop"~"mall|department_store|marketplace|supermarket"]']
         const overpassClauses = selectors.flatMap((selector) => anchorCoordinates.map(([lat, lon]) => `nwr${selector}(around:${anchorRadius},${lat},${lon});`)).join('')
         event(controller, encoder, 'status', { phase: 'researching', label: 'Finding food, stays and experiences near the famous landmarks' })
         const overpass = `[out:json][timeout:25];(${overpassClauses});out center 350;`
@@ -90,7 +95,10 @@ export async function POST(request: Request) {
         const facts = factsPayload?.[0]
         const fallbackElements = [...searchPlacesPayload, ...categoryPayload].filter((place: any) => !isExcludedRegion(place)).map((place: any) => ({ lat: place.lat, lon: place.lon, source: 'OpenStreetMap Nominatim', tags: { name: String(place.display_name).split(',')[0], tourism: place.type ?? place.category ?? 'place', amenity: place.type, 'addr:full': place.display_name } }))
         const iconicElements = famousAnchors.map((page: any) => ({ lat: page.coordinates[0].lat, lon: page.coordinates[0].lon, prominence: page.score, isAnchor: true, source: 'Wikipedia', description: page.extract, tags: { name: page.title, tourism: 'iconic landmark', wikipedia: page.title } }))
-        const places = normalizePlaces([...iconicElements, ...(placesPayload?.elements ?? []).filter((place: any) => !isExcludedRegion(place)), ...fallbackElements]).filter((place) => !isExcludedRegion(place) && distanceKm(base, place) <= radiusKm).map((place) => ({ ...place, distanceFromBaseKm: distanceKm(base, place) }))
+        const normalizedPlaces = normalizePlaces([...iconicElements, ...(placesPayload?.elements ?? []).filter((place: any) => !isExcludedRegion(place)), ...fallbackElements]).filter((place) => !isExcludedRegion(place) && distanceKm(base, place) <= radiusKm)
+        const hasWikipediaAnchors = normalizedPlaces.some((place) => place.isAnchor)
+        const fallbackAnchorNames = new Set(normalizedPlaces.filter((place) => /attraction|museum|gallery|viewpoint|monument|memorial|castle|ruins|archaeological|place_of_worship|park|garden/.test(place.type.toLocaleLowerCase())).sort((a, b) => (b.prominence ?? 0) - (a.prominence ?? 0)).slice(0, Math.max(profile.days * 2, 6)).map((place) => place.name.toLocaleLowerCase()))
+        const places = normalizedPlaces.map((place) => ({ ...place, isAnchor: place.isAnchor || (!hasWikipediaAnchors && fallbackAnchorNames.has(place.name.toLocaleLowerCase())), distanceFromBaseKm: distanceKm(base, place) }))
         const photos = (photoPayload?.results ?? []).filter((photo: any) => !isExcludedRegion(`${photo.alt_description ?? ''} ${photo.description ?? ''}`))
         if (photos.length) sources.push('Unsplash')
 

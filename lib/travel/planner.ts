@@ -69,7 +69,9 @@ function rankPlaces(places: ApiPlace[], interests: string[]) {
 function buildDays(places: ApiPlace[], days: number, interests: string[], dateValues: string[], destination: string): DayPlan[] {
   const destinationName = destination.toLocaleLowerCase().trim()
   const ranked = rankPlaces(places.filter((place) => place.name.toLocaleLowerCase().trim() !== destinationName), interests)
-  const anchors = ranked.filter((place) => place.isAnchor)
+  const explicitAnchors = ranked.filter((place) => place.isAnchor)
+  const landmarkFallbacks = ranked.filter((place) => stopKind(place) === 'landmark')
+  const anchors = explicitAnchors.length >= Math.min(days, 2) ? explicitAnchors : [...explicitAnchors, ...landmarkFallbacks.filter((place) => !explicitAnchors.some((anchor) => anchor.name === place.name))]
   const pools = new Map<StopKind, ApiPlace[]>(['landmark','food','cafe','activity','market','service'].map((kind) => [kind as StopKind, ranked.filter((place) => stopKind(place) === kind)]))
   const used = new Set<string>(), groups: ApiPlace[][] = []
   const patterns: StopKind[][] = [
