@@ -17,7 +17,7 @@ function stopKind(place: ApiPlace): StopKind {
 }
 
 const moneyCodes = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD', 'AED', 'THB', 'IDR']
-const interestWords = ['food', 'architecture', 'history', 'art', 'nature', 'beach', 'shopping', 'nightlife', 'museum', 'museums', 'cafe', 'restaurant', 'park', 'culture', 'landmark', 'landmarks', 'place', 'places', 'sightseeing', 'monastery', 'monasteries', 'activity', 'activities', 'adventure', 'cafes', 'restaurants', 'services', 'markets']
+const interestWords = ['food', 'architecture', 'history', 'art', 'nature', 'beach', 'shopping', 'nightlife', 'museum', 'museums', 'cafe', 'restaurant', 'park', 'culture', 'landmark', 'landmarks', 'place', 'places', 'attraction', 'attractions', 'hotel', 'hotels', 'photo', 'photos', 'spot', 'spots', 'sightseeing', 'monastery', 'monasteries', 'activity', 'activities', 'adventure', 'cafes', 'restaurants', 'services', 'markets']
 const weatherCodes: Record<number, string> = { 0: 'Clear skies', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Foggy', 48: 'Icy fog', 51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 80: 'Rain showers', 81: 'Rain showers', 82: 'Heavy showers', 95: 'Thunderstorms' }
 
 export function parseRequest(request: string): RequestProfile {
@@ -49,6 +49,8 @@ export function normalizePlaces(elements: any[]): ApiPlace[] {
     const tags = item.tags ?? {}, name = tags.name, lat = Number(item.lat ?? item.center?.lat), lon = Number(item.lon ?? item.center?.lon)
     if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) continue
     const type = tags.tourism ?? tags.historic ?? tags.amenity ?? tags.leisure ?? tags.shop ?? tags.natural ?? 'place'
+    if (/office|company|information|guide|administrative|suburb|neighbourhood|quarter|road|route|station|platform/.test(String(type).toLocaleLowerCase())) continue
+    if (/\b(tourism office|tourism centre|tourism center|tourism corporation|catering and tourism corporation)\b/i.test(String(name))) continue
     const address = tags['addr:full'] ?? ([tags['addr:housenumber'], tags['addr:street'], tags['addr:city']].filter(Boolean).join(' ') || undefined)
     const signatureType = ['attraction','museum','monument','memorial','castle','viewpoint','place_of_worship','iconic landmark','landmark'].includes(type)
     const prominence = Number(item.prominence ?? 0) + Number(item.importance ?? 0) * 25 + (tags.wikipedia ? 18 : 0) + (tags.wikidata ? 14 : 0) + (tags.website ? 2 : 0) + (signatureType ? 12 : 0)
@@ -122,10 +124,9 @@ function guidePlace(place: ApiPlace, destination: string) {
 function buildGuide(places: ApiPlace[], days: DayPlan[], destination: string) {
   const ranked = rankPlaces(places.filter((place) => place.name.toLocaleLowerCase() !== destination.toLocaleLowerCase()), [])
   const identity = (place: Pick<ApiPlace, 'name' | 'lat' | 'lon'>) => `${place.name.toLocaleLowerCase().replace(/[^a-z0-9]/g, '')}:${place.lat.toFixed(3)}:${place.lon.toFixed(3)}`
-  const scheduled = new Set(days.flatMap((day) => day.stops.map(identity)))
   const claimed = new Set<string>()
   const pick = (test: (place: ApiPlace) => boolean, limit: number) => {
-    const selected = ranked.filter((place) => test(place) && !scheduled.has(identity(place)) && !claimed.has(identity(place))).slice(0, limit)
+    const selected = ranked.filter((place) => test(place) && !claimed.has(identity(place))).slice(0, limit)
     selected.forEach((place) => claimed.add(identity(place)))
     return selected.map((place) => guidePlace(place, destination))
   }
@@ -134,9 +135,8 @@ function buildGuide(places: ApiPlace[], days: DayPlan[], destination: string) {
     attractions,
     food: pick((place) => ['food', 'cafe'].includes(stopKind(place)), 8),
     hotels: pick((place) => stopKind(place) === 'hotel', 6),
-    shopping: pick((place) => stopKind(place) === 'market', 6),
-    photoSpots: pick((place) => /viewpoint|monument|castle|garden|peak|beach|attraction/.test(place.type.toLocaleLowerCase()), 6),
-    hiddenGems: pick((place) => !place.isAnchor && (place.prominence ?? 0) < 30 && !['hotel', 'service'].includes(stopKind(place)), 5),
+    shopping: ranked.filter((place) => stopKind(place) === 'market' || /mall|department_store|marketplace|supermarket|shopping/.test(place.type.toLocaleLowerCase())).slice(0, 6).map((place) => guidePlace(place, destination)),
+    photoSpots: ranked.filter((place) => /viewpoint|monument|memorial|castle|garden|peak|beach|attraction|museum|gallery|park|place_of_worship|iconic landmark/.test(place.type.toLocaleLowerCase())).slice(0, 6).map((place) => guidePlace(place, destination)),
     experiences: pick((place) => stopKind(place) === 'activity', 6),
     transportation: ['Use the mapped daily clusters to reduce backtracking.', 'For stops under 2 km, walking may be practical; check terrain and weather first.', 'For longer legs, compare licensed taxi, public transport and hotel transfer options locally.'],
     safety: [`Use official or licensed transport in ${destination}.`, 'Keep emergency contacts and accommodation details available offline.', 'Verify weather, opening hours, permits and road conditions on the day of travel.'],
@@ -154,6 +154,8 @@ function buildPacking(weather: any) {
 export function buildTrip(input: { request: string; profile: RequestProfile; destination: string; country: string; coordinates: [number, number]; weather: any; facts: any; places: ApiPlace[]; exchangeRate?: number; photos?: any[]; sources: string[] }): TripDossier {
   const { request, profile, destination, country, coordinates, weather, facts, places, exchangeRate, photos = [], sources } = input
   const photo = photos[0]
+  const photoUrl = photo?.urls?.regular ?? photo?.thumbnail?.source
+  const photoAlt = photo?.alt_description ?? photo?.title ?? `A glimpse of ${destination}`
   const days = buildDays(places, profile.days, profile.interests, weather?.daily?.time ?? [], destination)
   if (!days.length || !days[0].stops.length) throw new Error('No verified places were returned for this destination. Try a nearby city or broader region.')
   const highs: number[] = weather?.daily?.temperature_2m_max ?? [], lows: number[] = weather?.daily?.temperature_2m_min ?? []
@@ -184,9 +186,9 @@ export function buildTrip(input: { request: string; profile: RequestProfile; des
     days, guide: buildGuide(places, days, destination), packing: buildPacking(weather),
     atlasNote: `This route uses named places returned live around ${destination}. Verify opening hours directly before visiting.`,
     nearby: places.slice(days.flatMap((day) => day.stops).length, days.flatMap((day) => day.stops).length + 3).map((place) => place.name),
-    heroImage: photo?.urls?.regular, imageAlt: photo?.alt_description ?? (photo ? `Travel view of ${destination}, ${country}` : undefined),
-    photographerName: photo?.user?.name, photographerUrl: photo?.user?.links?.html ? `${photo.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` : undefined,
-    gallery: photos.slice(0, 6).filter((item) => item?.urls?.regular && item?.user?.links?.html).map((item) => ({ url: item.urls.regular, alt: item.alt_description ?? `Travel view of ${destination}`, photographerName: item.user.name, photographerUrl: `${item.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` })),
+    heroImage: photoUrl, imageAlt: photoUrl ? photoAlt : undefined,
+    photographerName: photo?.user?.name ?? (photoUrl ? 'Verified destination reference' : undefined), photographerUrl: photo?.user?.links?.html ? `${photo.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` : photo?.fullurl,
+    gallery: photos.slice(0, 6).map((item) => ({ url: item?.urls?.regular ?? item?.thumbnail?.source, alt: item?.alt_description ?? item?.title ?? `A glimpse of ${destination}`, photographerName: item?.user?.name ?? 'Verified destination reference', photographerUrl: item?.user?.links?.html ? `${item.user.links.html}?utm_source=atlas_travel_planner&utm_medium=referral` : item?.fullurl })).filter((item) => item.url && item.photographerUrl),
     sources, generatedAt: new Date().toISOString(),
   }
 }

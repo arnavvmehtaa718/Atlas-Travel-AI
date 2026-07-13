@@ -16,7 +16,7 @@ export const tripDossierSchema = z.object({
   days: z.array(dayPlanSchema).min(1), packing: z.array(z.string()).min(1), atlasNote: z.string(), nearby: z.array(z.string()).default([]),
   guide: z.object({
     attractions: z.array(placeSchema), food: z.array(placeSchema), hotels: z.array(placeSchema), shopping: z.array(placeSchema),
-    photoSpots: z.array(placeSchema), hiddenGems: z.array(placeSchema), experiences: z.array(placeSchema),
+    photoSpots: z.array(placeSchema), experiences: z.array(placeSchema),
     transportation: z.array(z.string()), safety: z.array(z.string()),
   }),
   heroImage: z.string().url().optional(), imageAlt: z.string().optional(), photographerName: z.string().optional(), photographerUrl: z.string().url().optional(),

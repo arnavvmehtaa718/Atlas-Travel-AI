@@ -25,7 +25,7 @@ export function TripDossierView({ trip }: { trip: TripDossier }) {
   }
   const categorySections = [
     ['Attractions', trip.guide.attractions], ['Food guide', trip.guide.food], ['Hotels', trip.guide.hotels], ['Shopping', trip.guide.shopping],
-    ['Photo spots', trip.guide.photoSpots], ['Hidden gems', trip.guide.hiddenGems],
+    ['Photo spots', trip.guide.photoSpots],
   ] as const
   return (
     <section className="dossier" aria-labelledby="dossier-title">
@@ -66,7 +66,7 @@ export function TripDossierView({ trip }: { trip: TripDossier }) {
         <div className="guide-heading"><div><span className="eyebrow">Destination handbook</span><h3 id="guide-title">Famous, useful, and close by.</h3><p>The same verified places used to compose your itinerary, organized for quick decisions.</p></div><div className="guide-actions"><button type="button" onClick={() => window.print()}><Printer />Print / Save PDF</button><button type="button" onClick={shareGuide}><Share2 />{shareLabel}</button></div></div>
         <div className="overview-grid"><article><span>Trip overview</span><strong>{trip.duration} · {trip.partySize} traveller{trip.partySize === 1 ? '' : 's'}</strong><p>{trip.thesis}</p></article><article><span>Weather</span><strong>{trip.temperature} · {trip.weather}</strong><p>Use the forecast with the packing list and verify mountain or road conditions locally.</p></article></div>
         {categorySections.map(([title, places], sectionIndex) => <section className="guide-section" key={title}><div className="section-title"><span>{String(sectionIndex + 3).padStart(2, '0')}</span><h3>{title}</h3></div>{places.length ? <motion.div className="guide-cards" initial="hidden" whileInView="visible" viewport={{ once: true, amount: .15 }} variants={{ hidden: {}, visible: { transition: { staggerChildren: .07 } } }}>{places.map((place) => <motion.article variants={{ hidden: { opacity: 0, y: 22 }, visible: { opacity: 1, y: 0 } }} whileHover={{ y: -5 }} key={`${title}-${place.name}`}><span>{place.category} · {place.distanceFromBaseKm.toFixed(1)} km</span><h4>{place.name}</h4><p>{place.note}</p><div><strong>{place.estimatedCostInr ? `Estimate ${formatInr(place.estimatedCostInr)}` : 'Price unavailable / verify'}</strong><a href={place.mapsUrl} target="_blank" rel="noreferrer">Map <ExternalLink /></a></div></motion.article>)}</motion.div> : <p className="guide-empty">No sufficiently relevant live results were returned for this category; Atlas will not pad the guide with unrelated places.</p>}</section>)}
-        <div className="practical-grid"><section><div className="section-title"><span>09</span><h3>Transportation</h3></div>{trip.guide.transportation.map((tip) => <p key={tip}>{tip}</p>)}</section><section><div className="section-title"><span>10</span><h3>Safety tips</h3></div>{trip.guide.safety.map((tip) => <p key={tip}>{tip}</p>)}</section></div>
+        <div className="practical-grid"><section><div className="section-title"><span>08</span><h3>Transportation</h3></div>{trip.guide.transportation.map((tip) => <p key={tip}>{tip}</p>)}</section><section><div className="section-title"><span>09</span><h3>Safety tips</h3></div>{trip.guide.safety.map((tip) => <p key={tip}>{tip}</p>)}</section></div>
       </section>
     </section>
   )

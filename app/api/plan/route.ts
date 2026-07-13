@@ -58,7 +58,10 @@ export async function POST(request: Request) {
         const anchorCandidates = new Map<string, any>()
         wikiSearches.forEach((payload, queryIndex) => Object.values(payload?.query?.pages ?? {}).forEach((page: any, resultIndex) => {
           const coordinate = page.coordinates?.[0], title = String(page.title ?? ''), lower = title.toLocaleLowerCase()
-          if (!coordinate || /^(list of|tourism in|history of|geography of)/i.test(title) || lower === destination.toLocaleLowerCase()) return
+          const extract = String(page.extract ?? '')
+          const nonPlaceTitle = /^(list of|tourism in|history of|geography of|timeline of|culture of|economy of|demographics of|transport in|\d{4} in)|\b(operation|expo|exposition|conference|festival|election|protest|battle|massacre|incident|attack|war|campaign|movement|mission|project|treaty|agreement|pandemic|disaster|earthquake|cyclone|film|song|album|book|episode|season|team|organization)\b/i.test(title)
+          const nonPlaceExtract = /\b(was an? (operation|event|military action|political movement|exposition|world expo|conference|incident|attack|battle|campaign)|is an? (annual event|festival|exhibition event|military operation|political movement))\b/i.test(extract)
+          if (!coordinate || nonPlaceTitle || nonPlaceExtract || lower === destination.toLocaleLowerCase()) return
           const candidate = { ...page, appearances: 1, score: 110 - queryIndex * 4 - resultIndex * 2 }
           const existing = anchorCandidates.get(lower)
           anchorCandidates.set(lower, existing ? { ...existing, appearances: existing.appearances + 1, score: existing.score + 22 } : candidate)
@@ -66,23 +69,39 @@ export async function POST(request: Request) {
         const base = { lat: latitude, lon: longitude }
         const famousAnchors = [...anchorCandidates.values()].filter((page: any) => !isExcludedRegion(page) && distanceKm(base, { lat: page.coordinates[0].lat, lon: page.coordinates[0].lon }) <= radiusKm).sort((a: any, b: any) => b.score - a.score).slice(0, Math.max(profile.days * 3, 10))
         if (famousAnchors.length) sources.push('Wikipedia landmark search')
-        const anchorRadius = regional ? 12000 : 5000
-        const anchorCoordinates = famousAnchors.length
-          ? famousAnchors.slice(0, Math.max(profile.days * 2, 6)).map((page: any) => [page.coordinates[0].lat, page.coordinates[0].lon])
-          : [[latitude, longitude]]
+        const anchorRadius = regional ? 12000 : Math.min(Math.max(radiusMeters, 7000), 15000)
+        const anchorCoordinates = [[latitude, longitude], ...famousAnchors.slice(0, Math.max(profile.days * 2, 6)).map((page: any) => [page.coordinates[0].lat, page.coordinates[0].lon])]
+          .filter(([lat, lon], index, values) => values.findIndex(([otherLat, otherLon]) => Math.abs(lat - otherLat) < .001 && Math.abs(lon - otherLon) < .001) === index)
         const selectors = ['["tourism"~"attraction|museum|gallery|viewpoint|zoo|theme_park|hotel|hostel|guest_house|motel|apartment"]', '["historic"~"monument|memorial|castle|ruins|archaeological_site"]', '["amenity"~"place_of_worship|restaurant|fast_food|food_court|cafe|ice_cream|marketplace|pharmacy|bank|atm|car_rental"]', '["leisure"~"park|garden|sports_centre"]', '["shop"~"mall|department_store|marketplace|supermarket"]']
         const overpassClauses = selectors.flatMap((selector) => anchorCoordinates.map(([lat, lon]) => `nwr${selector}(around:${anchorRadius},${lat},${lon});`)).join('')
         event(controller, encoder, 'status', { phase: 'researching', label: 'Finding food, stays and experiences near the famous landmarks' })
         const overpass = `[out:json][timeout:25];(${overpassClauses});out center 350;`
+        const overpassEndpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']
+        const fetchOverpass = async () => {
+          for (const endpoint of overpassEndpoints) {
+            try { return await json(`${endpoint}?data=${encodeURIComponent(overpass)}`, undefined, 1) } catch { /* Try the next public mirror. */ }
+          }
+          return null
+        }
+        const categoryQueries = ['attractions', 'restaurants', 'hotels', 'shopping malls', 'viewpoints parks']
+        const categorySearches = await Promise.all(categoryQueries.map((category) => json(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&namedetails=1&limit=8&bounded=1&viewbox=${longitude - radiusKm / 80},${latitude + radiusKm / 111},${longitude + radiusKm / 80},${latitude - radiusKm / 111}&q=${encodeURIComponent(`${category} in ${destination}, ${country}`)}`, { headers: { 'User-Agent': 'AtlasTravelPlanner/1.0 (public travel research)' } }, 1).catch(() => [])))
+        const destinationImagePayload = await json(`https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrsearch=${encodeURIComponent(`${destination} ${country} landmark architecture`)}&gsrnamespace=0&gsrlimit=20&prop=coordinates|pageimages&piprop=thumbnail&pithumbsize=1200`, wikiHeaders).catch(() => null)
+        const destinationImages = Object.values(destinationImagePayload?.query?.pages ?? {}).filter((page: any) => page.thumbnail?.source && (!page.coordinates?.[0] || distanceKm(base, { lat: page.coordinates[0].lat, lon: page.coordinates[0].lon }) <= radiusKm))
+        const commonsPayload = await json(`https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrsearch=${encodeURIComponent(`${destination} ${country}`)}&gsrnamespace=6&gsrlimit=16&prop=imageinfo&iiprop=url&iiurlwidth=1200`, wikiHeaders).catch(() => null)
+        const commonsImages = Object.values(commonsPayload?.query?.pages ?? {}).filter((page: any) => /\.(jpe?g|png|webp)$/i.test(page.title ?? '') && page.imageinfo?.[0]?.thumburl).map((page: any) => ({ pageid: `commons-${page.pageid}`, title: page.title.replace(/^File:/, ''), thumbnail: { source: page.imageinfo[0].thumburl }, fullurl: page.imageinfo[0].descriptionurl }))
+        const wikiImages = [...famousAnchors, ...destinationImages, ...commonsImages, ...[...anchorCandidates.values()].filter((page: any) => page.thumbnail?.source && distanceKm(base, { lat: page.coordinates?.[0]?.lat ?? latitude, lon: page.coordinates?.[0]?.lon ?? longitude }) <= radiusKm)]
+          .filter((page: any, index: number, values: any[]) => page.thumbnail?.source && values.findIndex((candidate: any) => candidate.pageid === page.pageid) === index)
+          .slice(0, 8)
+          .map((page: any) => ({ thumbnail: page.thumbnail, title: page.title, fullurl: `https://en.wikipedia.org/?curid=${page.pageid}` }))
         const requests = await Promise.allSettled([
           json(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=7`),
           json(`https://restcountries.com/v3.1/name/${encodeURIComponent(country)}?fullText=true&fields=name,currencies,languages,timezones`),
-          json(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpass)}`),
+          fetchOverpass(),
           process.env.UNSPLASH_ACCESS_KEY ? json(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(`${destination} ${geo.address?.state ?? ''} ${country} travel landmarks food cafes`)}&orientation=landscape&per_page=8`, { headers: { Authorization: `Client-ID ${process.env.UNSPLASH_ACCESS_KEY}`, 'Accept-Version': 'v1' } }) : Promise.reject(new Error('Unsplash not configured')),
           json(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=40&bounded=1&viewbox=${longitude - radiusKm / 80},${latitude + radiusKm / 111},${longitude + radiusKm / 80},${latitude - radiusKm / 111}&q=${encodeURIComponent(`tourism ${destination} ${geo.address?.state ?? ''}`)}`, { headers: { 'User-Agent': 'AtlasTravelPlanner/1.0 (travel-planner)' } }),
           Promise.resolve(null),
           Promise.resolve(null),
-          Promise.resolve([]),
+          Promise.resolve(categorySearches),
         ])
         const [weatherResult, factsResult, placesResult, photoResult, searchPlacesResult, wikiResult, iconicWikiResult, categorySearchResult] = requests
         const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null
@@ -92,20 +111,26 @@ export async function POST(request: Request) {
         const searchPlacesPayload = searchPlacesResult.status === 'fulfilled' ? searchPlacesResult.value : []
         const wikiPayload = wikiResult.status === 'fulfilled' ? wikiResult.value : null
         const iconicWikiPayload = iconicWikiResult.status === 'fulfilled' ? iconicWikiResult.value : null
-        const categoryPayload = categorySearchResult.status === 'fulfilled' ? categorySearchResult.value.flat() : []
+        const categoryTypes = ['attraction', 'restaurant', 'hotel', 'mall', 'viewpoint']
+        const categoryPayload = categorySearchResult.status === 'fulfilled' ? categorySearchResult.value.flatMap((items: any[], index: number) => items.map((item: any) => ({ ...item, atlasCategory: categoryTypes[index] }))) : []
         if (weather) sources.push('Open-Meteo')
         if (factsPayload) sources.push('REST Countries')
         if (placesPayload) sources.push('OpenStreetMap Overpass')
         if (searchPlacesPayload.length) sources.push('OpenStreetMap Nominatim place search')
         const facts = factsPayload?.[0]
-        const fallbackElements = [...searchPlacesPayload, ...categoryPayload].filter((place: any) => !isExcludedRegion(place)).map((place: any) => ({ lat: place.lat, lon: place.lon, source: 'OpenStreetMap Nominatim', tags: { name: String(place.display_name).split(',')[0], tourism: place.type ?? place.category ?? 'place', amenity: place.type, 'addr:full': place.display_name } }))
+        const fallbackElements = [...searchPlacesPayload, ...categoryPayload].filter((place: any) => !isExcludedRegion(place)).map((place: any) => ({ lat: place.lat, lon: place.lon, source: 'OpenStreetMap Nominatim', prominence: Number(place.importance ?? 0) * 100, tags: { name: String(place.namedetails?.name ?? place.display_name).split(',')[0], tourism: place.atlasCategory === 'hotel' ? 'hotel' : place.atlasCategory === 'attraction' || place.atlasCategory === 'viewpoint' ? place.atlasCategory : place.atlasCategory ? undefined : place.type ?? place.category ?? 'place', amenity: place.atlasCategory === 'restaurant' ? 'restaurant' : place.atlasCategory ? undefined : place.type, shop: place.atlasCategory === 'mall' ? 'mall' : undefined, 'addr:full': place.display_name } }))
         const iconicElements = famousAnchors.map((page: any) => ({ lat: page.coordinates[0].lat, lon: page.coordinates[0].lon, prominence: page.score, isAnchor: true, source: 'Wikipedia', description: page.extract, tags: { name: page.title, tourism: 'iconic landmark', wikipedia: page.title } }))
         const normalizedPlaces = normalizePlaces([...iconicElements, ...(placesPayload?.elements ?? []).filter((place: any) => !isExcludedRegion(place)), ...fallbackElements]).filter((place) => !isExcludedRegion(place) && distanceKm(base, place) <= radiusKm)
         const hasWikipediaAnchors = normalizedPlaces.some((place) => place.isAnchor)
         const fallbackAnchorNames = new Set(normalizedPlaces.filter((place) => /attraction|museum|gallery|viewpoint|monument|memorial|castle|ruins|archaeological|place_of_worship|park|garden/.test(place.type.toLocaleLowerCase())).sort((a, b) => (b.prominence ?? 0) - (a.prominence ?? 0)).slice(0, Math.max(profile.days * 2, 6)).map((place) => place.name.toLocaleLowerCase()))
         const places = normalizedPlaces.map((place) => ({ ...place, isAnchor: place.isAnchor || (!hasWikipediaAnchors && fallbackAnchorNames.has(place.name.toLocaleLowerCase())), distanceFromBaseKm: distanceKm(base, place) }))
-        const photos = (photoPayload?.results ?? []).filter((photo: any) => !isExcludedRegion(`${photo.alt_description ?? ''} ${photo.description ?? ''}`))
-        if (photos.length) sources.push('Unsplash')
+        const providerPhotos = (photoPayload?.results ?? []).filter((photo: any) => !isExcludedRegion(`${photo.alt_description ?? ''} ${photo.description ?? ''}`))
+        const photos = providerPhotos.length >= 4 ? providerPhotos : [...providerPhotos, ...wikiImages].filter((photo: any, index: number, values: any[]) => {
+          const url = photo?.urls?.regular ?? photo?.thumbnail?.source
+          return url && values.findIndex((candidate: any) => (candidate?.urls?.regular ?? candidate?.thumbnail?.source) === url) === index
+        })
+        if (providerPhotos.length) sources.push('Destination image search')
+        if (wikiImages.length) sources.push('Wikipedia destination images')
 
         let exchangeRate: number | undefined
         if (profile.currency !== 'INR' && process.env.EXCHANGE_RATE_API_KEY) {
