@@ -9,7 +9,11 @@ const nextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: 'upload.wikimedia.org' },
       { protocol: 'https', hostname: '*.wikimedia.org' },
+      { protocol: 'https', hostname: 'images.unsplash.com' },
+      { protocol: 'https', hostname: 'cdn.shopify.com' },
     ],
+    unoptimized: false,
+    minimumCacheTTL: 31536000,
   },
 }
 
