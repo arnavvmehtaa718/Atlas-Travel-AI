@@ -5,9 +5,14 @@ import { destinationRadius, distanceKm, isExcludedRegion, pickDestination } from
 
 export const maxDuration = 60
 
-async function json(url: string, init?: RequestInit) {
+async function json(url: string, init?: RequestInit, retries = 2): Promise<any> {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(12000) })
-  if (!response.ok) throw new Error(`Source returned ${response.status}`)
+  if ((response.status === 429 || response.status >= 500) && retries > 0) {
+    const retryAfter = Number(response.headers.get('retry-after') ?? 0)
+    await new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(retryAfter * 1000, 700), 2500)))
+    return json(url, init, retries - 1)
+  }
+  if (!response.ok) throw new Error(response.status === 429 ? 'A live data source is busy. Please retry in a moment.' : `Source returned ${response.status}`)
   return response.json()
 }
 
@@ -77,7 +82,7 @@ export async function POST(request: Request) {
           json(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=40&bounded=1&viewbox=${longitude - radiusKm / 80},${latitude + radiusKm / 111},${longitude + radiusKm / 80},${latitude - radiusKm / 111}&q=${encodeURIComponent(`tourism ${destination} ${geo.address?.state ?? ''}`)}`, { headers: { 'User-Agent': 'AtlasTravelPlanner/1.0 (travel-planner)' } }),
           Promise.resolve(null),
           Promise.resolve(null),
-          Promise.all(['famous attraction','restaurant','cafe','hotel','market','viewpoint','local experience','pharmacy'].map((category) => json(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=10&bounded=1&viewbox=${longitude - radiusKm / 80},${latitude + radiusKm / 111},${longitude + radiusKm / 80},${latitude - radiusKm / 111}&q=${encodeURIComponent(`${category} in ${destination} ${country}`)}`, { headers: { 'User-Agent': 'AtlasTravelPlanner/1.0 (travel-planner)' } }).catch(() => []))),
+          Promise.resolve([]),
         ])
         const [weatherResult, factsResult, placesResult, photoResult, searchPlacesResult, wikiResult, iconicWikiResult, categorySearchResult] = requests
         const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null

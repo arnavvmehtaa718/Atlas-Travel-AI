@@ -17,7 +17,7 @@ function stopKind(place: ApiPlace): StopKind {
 }
 
 const moneyCodes = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD', 'AED', 'THB', 'IDR']
-const interestWords = ['food', 'architecture', 'history', 'art', 'nature', 'beach', 'shopping', 'nightlife', 'museum', 'museums', 'cafe', 'restaurant', 'park', 'culture', 'landmark', 'landmarks', 'sightseeing', 'monastery', 'monasteries', 'activity', 'activities', 'adventure', 'cafes', 'restaurants', 'services', 'markets']
+const interestWords = ['food', 'architecture', 'history', 'art', 'nature', 'beach', 'shopping', 'nightlife', 'museum', 'museums', 'cafe', 'restaurant', 'park', 'culture', 'landmark', 'landmarks', 'place', 'places', 'sightseeing', 'monastery', 'monasteries', 'activity', 'activities', 'adventure', 'cafes', 'restaurants', 'services', 'markets']
 const weatherCodes: Record<number, string> = { 0: 'Clear skies', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Foggy', 48: 'Icy fog', 51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 80: 'Rain showers', 81: 'Rain showers', 82: 'Heavy showers', 95: 'Thunderstorms' }
 
 export function parseRequest(request: string): RequestProfile {
@@ -33,8 +33,9 @@ export function parseRequest(request: string): RequestProfile {
     .replace(/[$€£₹¥]?\s*[\d,]+\s*(?:USD|EUR|GBP|INR|JPY|AUD|CAD|SGD|AED|THB|IDR)?/gi, ' ')
     .replace(new RegExp(`\\b(?:${interestWords.join('|')})\\b`, 'gi'), ' ')
     .replace(/\s+/g, ' ').replace(/^[,.;\s-]+|[,.;\s-]+$/g, '').trim()
+  const destinationQuery = (cleaned || request.trim()).replace(/\bbengalouru\b/i, 'Bengaluru').replace(/\bbangalore\b/i, 'Bengaluru')
   return {
-    destinationQuery: cleaned || request.trim(), days: Math.min(Math.max(days, 1), 10),
+    destinationQuery, days: Math.min(Math.max(days, 1), 10),
     budget: budgetMatch ? Number((budgetMatch[2] ?? budgetMatch[6] ?? budgetMatch[7]).replace(/,/g, '')) : undefined,
     currency: explicitCode ?? symbolCode[budgetMatch?.[1] ?? budgetMatch?.[5] ?? ''] ?? budgetMatch?.[8] ?? 'USD',
     party: partyMatch ? Math.min(Number(partyMatch[1]), 12) : 1,
